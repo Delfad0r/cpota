@@ -251,7 +251,7 @@ public:
                 throw PotaError("Negative trampoline");
             }
             ptr.must_skip = x;
-        }
+        };
         // Where
         functions['w'] = [&](Pointer& ptr) {
             ptr.push(ptr.x);
