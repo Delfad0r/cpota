@@ -1,3 +1,21 @@
+/*
+# C++ Pota interpreter - https://github.com/Delfad0r/cpota
+# Copyright © 2016 Filippo Baroni <filippo.gianni.baroni@gmail.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #include <algorithm>
 #include <array>
 #include <assert.h>
@@ -10,6 +28,7 @@
 #include <set>
 #include <stdio.h>
 #include <string>
+#include <string.h>
 #include <termios.h>
 #include <unistd.h>
 #include <unordered_map>
@@ -119,7 +138,15 @@ public:
     ll& n() {
         if(!num_ok) {
             num_ok = true;
-            num = std::stoll(str);
+            std::size_t pos;
+            try {
+                num = std::stoll(str, &pos, 10);
+            } catch(...) {
+                throw PotaError("Cannot convert to integer");
+            }
+            if(pos != str.length()) {
+                throw PotaError("Cannot convert to integer");
+            }
         }
         return num;
     }
@@ -159,7 +186,8 @@ class Pointer {
     
     unsigned id;
     ll x, y, dirx, diry;
-    bool is_alive, must_skip;
+    bool is_alive;
+    unsigned must_skip;
     char string_mode;
     std::vector<std::deque<Either>> stacks;
     std::deque<char> instructions;
@@ -205,23 +233,25 @@ public:
         functions['\\'] = [&](Pointer& ptr) {
             std::swap(ptr.dirx, ptr.diry);
         };
-        functions['|'] = [&](Pointer& ptr) {
-            ptr.dirx = -ptr.dirx;
-        };
-        functions['_'] = [&](Pointer& ptr) {
-            ptr.diry = -ptr.diry;
-        };
         functions['x'] = [&](Pointer& ptr) {
-            functions["/\\|_"[std::uniform_int_distribution<>(0, 3)(rng)]](ptr);
+            functions["<>^v"[std::uniform_int_distribution<>(0, 3)(rng)]](ptr);
         };
         // Skip
         functions['!'] = [&](Pointer& ptr) {
-            ptr.must_skip = true;
+            ptr.must_skip = 1;
         };
         // CondSkip
         functions['?'] = [&](Pointer& ptr) {
             ptr.must_skip = (ptr.pop().s() != "0");
         };
+        // Trampoline
+        functions['t'] = [&](Pointer& ptr) {
+            ll x = ptr.pop().n();
+            if(x < 0) {
+                throw PotaError("Negative trampoline");
+            }
+            ptr.must_skip = x;
+        }
         // Where
         functions['w'] = [&](Pointer& ptr) {
             ptr.push(ptr.x);
@@ -242,6 +272,10 @@ public:
             };
         }
         // Arith
+        functions['_'] = [&](Pointer& ptr) {
+            ll x = ptr.pop().n();
+            ptr.push(-x);
+        };
         functions['+'] = [&](Pointer& ptr) {
             ll y = ptr.pop().n();
             ll x = ptr.pop().n();
@@ -257,10 +291,20 @@ public:
             ll x = ptr.pop().n();
             ptr.push(x * y);
         };
-        functions['%'] = [&](Pointer& ptr) {
+        functions['|'] = [&](Pointer& ptr) {
             ll y = ptr.pop().n();
+            if(y == 0) {
+                throw PotaError("Division by zero");
+            }
             ll x = ptr.pop().n();
             ptr.push(x / y);
+        };
+        functions['%'] = [&](Pointer& ptr) {
+            ll y = ptr.pop().n();
+            if(y == 0) {
+                throw PotaError("Division by zero");
+            }
+            ll x = ptr.pop().n();
             ptr.push(x % y);
         };
         // Concat
@@ -318,6 +362,40 @@ public:
             }
             ptr.stacks.back().clear();
             ptr.push(acc);
+        };
+        // Intercalate
+        functions['f'] = [&](Pointer& ptr) {
+            std::string acc, sep = ptr.pop().s();
+            for(unsigned i = 0; i < ptr.stacks.back().size(); ++i) {
+                acc += ptr.stacks.back()[i].s();
+                if(i + 1 < ptr.stacks.back().size()) {
+                    acc += sep;
+                }
+            }
+            ptr.stacks.back().clear();
+            ptr.push(acc);
+        };
+        // Split
+        functions['s'] = [&](Pointer& ptr) {
+            std::string sep = ptr.pop().s();
+            std::string s = ptr.pop().s();
+            if(sep.empty()) {
+                throw PotaError("Cannot split on empty separator");
+            }
+            ptr.stacks.emplace_back();
+            const char* s_pos = s.c_str();
+            while(true) {
+                const char* s_pos_prev = s_pos;
+                s_pos = strstr(s_pos, sep.c_str());
+                if(s_pos == NULL) {
+                    s_pos = s.c_str() + s.length();
+                }
+                ptr.stacks.back().push_back(std::string(s_pos_prev, s_pos));
+                if(s_pos == s.c_str() + s.length()) {
+                    break;
+                }
+                s_pos += sep.length();
+            }
         };
         // Rotate
         functions['{'] = [&](Pointer& ptr) {
@@ -463,7 +541,7 @@ public:
         y = y_;
         string_mode = '\0';
         is_alive = true;
-        must_skip = false;
+        must_skip = 0;
         stacks.emplace_back(begin_, end_);
         std::string str(code.get(x, y));
         instructions.insert(instructions.begin(), str.begin(), str.end());
@@ -485,7 +563,7 @@ public:
     void exec_instruction(const char instr) {
         // Skip
         if(must_skip) {
-            must_skip = false;
+            --must_skip;
             return;
         }
         // String mode
@@ -510,20 +588,20 @@ public:
             x += dirx;
             y += diry;
             if(diry < 0 && y < 0) {
-                must_skip = false;
+                must_skip = 0;
                 y = code.get_maxh(x);
             } else if(diry > 0 && y > code.get_maxh(x)) {
-                must_skip = false;
+                must_skip = 0;
                 y = 0;
             } else if(dirx < 0 && x < 0) {
-                must_skip = false;
+                must_skip = 0;
                 x = code.get_maxw(y);
             } else if(dirx > 0 && x > code.get_maxw(y)) {
-                must_skip = false;
+                must_skip = 0;
                 x = 0;
             }
             if(must_skip) {
-                must_skip = false;
+                --must_skip;
             } else {
                 std::string str(code.get(x, y));
                 instructions.insert(instructions.begin(), str.begin(), str.end());
