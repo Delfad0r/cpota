@@ -271,11 +271,12 @@ public:
                 ptr.push(std::string(1, c));
             };
         }
-        // Arith
+        // Negate
         functions['_'] = [&](Pointer& ptr) {
             ll x = ptr.pop().n();
             ptr.push(-x);
         };
+        // Arith
         functions['+'] = [&](Pointer& ptr) {
             ll y = ptr.pop().n();
             ll x = ptr.pop().n();
@@ -354,7 +355,7 @@ public:
             ptr.push(y);
             ptr.push(x);
         };
-        // Flatten
+        // Flatten'
         functions[':'] = [&](Pointer& ptr) {
             std::string acc;
             for(Either & x : ptr.stacks.back()) {
@@ -363,7 +364,7 @@ public:
             ptr.stacks.back().clear();
             ptr.push(acc);
         };
-        // Intercalate
+        // Flatten
         functions['f'] = [&](Pointer& ptr) {
             std::string acc, sep = ptr.pop().s();
             for(unsigned i = 0; i < ptr.stacks.back().size(); ++i) {
@@ -659,7 +660,6 @@ int main(int argc, char* argv[]) {
     termios old_settings, new_settings;
     tcgetattr(STDIN_FILENO, &old_settings);
     new_settings = old_settings;
-    //cfmakeraw(&new_settings);
     new_settings.c_lflag &= ~(ECHO | ECHONL | ICANON);
     tcsetattr(STDIN_FILENO, TCSANOW, &new_settings);
     
